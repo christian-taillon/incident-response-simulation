@@ -1,0 +1,6 @@
+# Local credentials and generated workshop artifacts
+.env
+.env.*
+!.env.example
+rclone.conf
+*.log
