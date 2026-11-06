@@ -1,20 +1,27 @@
-# Create fictional client documents for the data-exfiltration exercise.
-$ErrorActionPreference = 'Stop'
+# Prepare exclusively fictional documents for the incident simulation.
+[CmdletBinding()]
+param(
+    [ValidateRange(0, 64)]
+    [int]$ExtraMiB = 32
+)
 
+$ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'CSWorkshop'
 $docs = Join-Path $root 'ClientDocuments'
 $marker = Join-Path $root '.synthetic-only'
-$markerText = 'CSWORKSHOP-SYNTHETIC-ONLY'
+$manifest = Join-Path $root 'dataset-manifest.csv'
+$signature = 'CSWORKSHOP-SYNTHETIC-ONLY'
 
-# Do not adopt an existing, unrelated document directory.
-if ((Test-Path -LiteralPath $docs) -and
-    (Get-ChildItem -LiteralPath $docs -Force | Select-Object -First 1) -and
-    -not (Test-Path -LiteralPath $marker)) {
-    throw "Refusing to use existing unmarked document directory: $docs"
+if (Test-Path -LiteralPath $docs) {
+    if ((Test-Path -LiteralPath $marker) -and (Test-Path -LiteralPath $manifest)) {
+        Write-Host "[OK] Dataset already exists: $docs (not overwritten)"
+        return
+    }
+    throw "Refusing to overwrite an unverified or incomplete dataset: $docs"
 }
 
 New-Item -ItemType Directory -Path $docs -Force | Out-Null
-Set-Content -LiteralPath $marker -Value $markerText -Encoding ascii
+Set-Content -LiteralPath $marker -Value $signature -Encoding ASCII
 
 foreach ($client in @('Redwood', 'Saguaro', 'Aspen')) {
     $dir = Join-Path $docs $client
@@ -22,37 +29,73 @@ foreach ($client in @('Redwood', 'Saguaro', 'Aspen')) {
 
     1..8 | ForEach-Object {
         $number = '{0:D3}' -f $_
-        @"
-$markerText
+        $matterText = @"
+$signature
 CONFIDENTIAL - FICTIONAL TRAINING DATA
 Client: $client
 Matter: MAT-$number
-Description: Privileged client correspondence
-Status: Internal Review
-This file contains no real client data.
-"@ | Set-Content -LiteralPath (Join-Path $dir "Matter-$number.txt") -Encoding ascii
+Subject: Privileged client correspondence
+This document contains no real client information.
+"@
+        Set-Content -LiteralPath (Join-Path $dir "Matter-$number.txt") -Value $matterText -Encoding ASCII
     }
 
     1..100 | ForEach-Object {
         [pscustomobject]@{
+            Marker = $signature
             Client = $client
             Matter = ('MAT-{0:D3}' -f $_)
             Amount = $_ * 1250
-            Status = 'Confidential - Training'
-            Marker = $markerText
+            Status = 'Fictional - Training'
         }
-    } | Export-Csv -LiteralPath (Join-Path $dir 'Billing.csv') -NoTypeInformation
+    } | Export-Csv -LiteralPath (Join-Path $dir 'Billing.csv') -NoTypeInformation -Encoding UTF8
 
-    @"
+    $memo = @"
 {\rtf1\ansi
-\b ATTORNEY WORK PRODUCT - TRAINING ONLY\b0\par
-$markerText\par
+\b ATTORNEY WORK PRODUCT - FICTIONAL TRAINING DATA\b0\par
+$signature\par
 Client: $client\par
 Matter: Confidential Acquisition\par
-All information is fictional.\par
+All content is fictional.\par
 }
-"@ | Set-Content -LiteralPath (Join-Path $dir 'Legal-Memorandum.rtf') -Encoding ascii
+"@
+    Set-Content -LiteralPath (Join-Path $dir 'Legal-Memorandum.rtf') -Value $memo -Encoding ASCII
 }
 
-$count = @(Get-ChildItem -LiteralPath $docs -File -Recurse).Count
-Write-Host "[OK] Created $count synthetic documents in $docs"
+# Incompressible random bytes keep the uploaded ZIP large enough to investigate
+# network-volume questions. No source documents or existing files are sampled.
+if ($ExtraMiB -gt 0) {
+    $binary = Join-Path $docs 'Saguaro\Synthetic-Evidence.bin'
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $stream = [System.IO.File]::Open($binary, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write)
+    try {
+        $header = [System.Text.Encoding]::ASCII.GetBytes($signature + [Environment]::NewLine)
+        $stream.Write($header, 0, $header.Length)
+        $block = [byte[]]::new(1048576)
+        for ($i = 0; $i -lt $ExtraMiB; $i++) {
+            $rng.GetBytes($block)
+            $stream.Write($block, 0, $block.Length)
+        }
+    }
+    finally {
+        $stream.Dispose()
+        $rng.Dispose()
+    }
+}
+
+# The separate manifest is the complete allowlist for later transfers.
+$rows = @(
+    Get-ChildItem -LiteralPath $docs -Recurse -File -Force |
+        Sort-Object FullName |
+        ForEach-Object {
+            [pscustomobject]@{
+                RelativePath = $_.FullName.Substring($docs.Length + 1)
+                SizeBytes = $_.Length
+                SHA256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            }
+        }
+)
+$rows | Export-Csv -LiteralPath $manifest -NoTypeInformation -Encoding UTF8
+$total = ($rows | Measure-Object -Property SizeBytes -Sum).Sum
+Write-Host "[OK] Prepared $($rows.Count) fictional files ($([math]::Round($total / 1MB, 1)) MiB)"
+Write-Host "[OK] Manifest: $manifest"

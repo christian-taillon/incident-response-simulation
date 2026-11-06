@@ -1,6 +1,18 @@
-# Local credentials and generated workshop artifacts
+# Exercise credentials and environment
 .env
 .env.*
 !.env.example
-rclone.conf
+**/rclone.conf
+**/mega-credentials.env
+**/operator-notes.txt
+**/CSWorkshop/
+
+# Generated payloads, logs, recovered evidence
+*.zip
 *.log
+dataset-manifest.csv
+client-data-*.zip
+discovery-*.txt
+host-discovery-*.txt
+transfer-*.log
+last-run.txt
