@@ -9,9 +9,9 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'CSWorkshop'
-$bin = Join-Path $root 'bin'
-$rclone = Join-Path $bin 'rclone.exe'
 $config = Join-Path $root 'rclone.conf'
+$verifyInventory = Join-Path $PSScriptRoot 'verify-remote-inventory.ps1'
+$ensureRclone = Join-Path $PSScriptRoot 'ensure-rclone.ps1'
 
 if (-not $RunId) {
     $last = Join-Path $root 'last-run.txt'
@@ -29,17 +29,29 @@ if ($meta.RunId -cne $RunId -or [string]$meta.Host -notmatch '^[A-Za-z0-9_-]{1,6
 }
 $remoteDir = "workshopmega:CSWorkshop/$($meta.Host)/$RunId"
 if ($meta.RemoteDir -cne $remoteDir) { throw 'Remote path does not match recorded lab scope.' }
-if (-not (Test-Path -LiteralPath $rclone) -or -not (Test-Path -LiteralPath $config)) {
-    throw 'Rclone and the matching lab-only rclone.conf must be available in this workspace.'
+if (-not (Test-Path -LiteralPath $config)) {
+    throw 'The matching lab-only rclone.conf must be available in this workspace.'
+}
+$rclone = & $ensureRclone -Root $root
+
+function Get-RunInventory {
+    $listing = @(& $rclone --config $config lsjson $remoteDir --recursive --no-mimetype --no-modtime)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not list the remote lab directory.' }
+    & $verifyInventory -InventoryJson ($listing -join [Environment]::NewLine) -ArchiveBytes ([int64]$meta.ArchiveBytes)
+}
+
+function Assert-SameInventory {
+    param([object[]]$Expected, [object[]]$Current)
+    if ($Expected.Count -ne $Current.Count) { throw 'Remote inventory changed since recovery.' }
+    foreach ($item in $Current) {
+        $match = @($Expected | Where-Object { $_.Path -ceq $item.Path -and $_.ID -ceq $item.ID -and $_.Size -eq $item.Size })
+        if ($match.Count -ne 1) { throw 'Remote inventory changed since recovery.' }
+    }
 }
 
 Write-Host "[+] Inspecting $remoteDir"
-$listing = @(& $rclone --config $config lsf $remoteDir --files-only)
-if ($LASTEXITCODE -ne 0) { throw 'Could not list the remote lab directory.' }
-$names = @($listing | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if (@($names | Where-Object { $_ -notin @('probe.txt', 'client-data.zip') }).Count -gt 0) {
-    throw 'Unexpected objects detected. Refusing to operate on this remote directory.'
-}
+$inventory = @(Get-RunInventory)
+$names = @($inventory | ForEach-Object { $_.Path })
 Write-Host "Remote files: $($names -join ', ')"
 if ($Action -eq 'Inspect') { return }
 
@@ -47,6 +59,7 @@ if (-not $meta.Uploaded -or $names -notcontains 'client-data.zip') {
     throw 'Recorded upload not complete or archive absent from the remote.'
 }
 $backup = Join-Path (Join-Path (Join-Path $root 'recovery') $RunId) 'client-data.zip'
+$inventoryFile = Join-Path (Split-Path -Parent $backup) 'verified-inventory.json'
 $remoteArchive = "$remoteDir/client-data.zip"
 
 if ($Action -eq 'Download') {
@@ -56,6 +69,7 @@ if ($Action -eq 'Download') {
     if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $meta.ArchiveSha256) {
         throw 'Recovered archive hash does not match the local run record.'
     }
+    $inventory | ConvertTo-Json | Set-Content -LiteralPath $inventoryFile -Encoding UTF8
     Write-Host "[OK] Verified recovered archive: $backup"
     Write-Host "[OK] SHA256: $($meta.ArchiveSha256)"
     return
@@ -67,9 +81,17 @@ if (-not (Test-Path -LiteralPath $backup) -or
     (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $meta.ArchiveSha256) {
     throw 'Download and hash-verify the remote archive with -Action Download before deleting.'
 }
+if (-not (Test-Path -LiteralPath $inventoryFile)) {
+    throw 'Missing the inventory saved with the verified local recovery.'
+}
+$saved = @(Get-Content -LiteralPath $inventoryFile -Raw | ConvertFrom-Json)
+Assert-SameInventory -Expected $saved -Current $inventory
 if ($names -notcontains 'client-data.zip') { throw 'Remote archive missing.' }
 
 if ($PSCmdlet.ShouldProcess($remoteDir, 'Delete the recorded synthetic archive and probe only')) {
+    # Recheck after the confirmation prompt, immediately before deletion.
+    $current = @(Get-RunInventory)
+    Assert-SameInventory -Expected $saved -Current $current
     & $rclone --config $config deletefile $remoteArchive
     if ($LASTEXITCODE -ne 0) { throw 'Remote archive deletion failed.' }
     if ($names -contains 'probe.txt') {
