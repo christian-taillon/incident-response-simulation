@@ -26,7 +26,7 @@ jobs:
             $tokens = $null
             $fileErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
-            $errors += @($fileErrors)
+            $errors += @($fileErrors | Where-Object { $null -ne $_ })
           }
           if ($errors.Count) { $errors | Format-List; throw 'PowerShell parse failed.' }
       - name: Offline smoke tests
