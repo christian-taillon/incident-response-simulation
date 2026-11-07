@@ -1,0 +1,40 @@
+name: Windows PowerShell tests
+on:
+  push:
+    branches: [main, "codex/scenario-hardening-roadmap"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-powershell:
+    name: ${{ matrix.shell }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse all PowerShell scripts
+        shell: ${{ matrix.shell }}
+        run: |
+          $errors = @()
+          Get-ChildItem -Path scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $fileErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
+            $errors += @($fileErrors)
+          }
+          if ($errors.Count) { $errors | Format-List; throw 'PowerShell parse failed.' }
+      - name: Offline smoke tests
+        shell: ${{ matrix.shell }}
+        run: ./tests/smoke.ps1
+      - name: Hardening regression tests
+        shell: ${{ matrix.shell }}
+        run: ./tests/hardening.ps1
+      - name: Recovery planning regression tests
+        shell: ${{ matrix.shell }}
+        run: ./tests/recovery.ps1

@@ -11,6 +11,8 @@ $ErrorActionPreference = 'Stop'
 $root = Join-Path $env:LOCALAPPDATA 'CSWorkshop'
 $config = Join-Path $root 'rclone.conf'
 $verifyInventory = Join-Path $PSScriptRoot 'verify-remote-inventory.ps1'
+$assertInventory = Join-Path $PSScriptRoot 'assert-known-inventory.ps1'
+$planRecovery = Join-Path $PSScriptRoot 'plan-recovery.ps1'
 $ensureRclone = Join-Path $PSScriptRoot 'ensure-rclone.ps1'
 
 if (-not $RunId) {
@@ -29,6 +31,9 @@ if ($meta.RunId -cne $RunId -or [string]$meta.Host -notmatch '^[A-Za-z0-9_-]{1,6
 }
 $remoteDir = "workshopmega:CSWorkshop/$($meta.Host)/$RunId"
 if ($meta.RemoteDir -cne $remoteDir) { throw 'Remote path does not match recorded lab scope.' }
+if ($meta.ArchiveSha256 -notmatch '^[0-9a-fA-F]{64}$' -or [int64]$meta.ArchiveBytes -le 0) {
+    throw 'Invalid archive hash or size in run record.'
+}
 if (-not (Test-Path -LiteralPath $config)) {
     throw 'The matching lab-only rclone.conf must be available in this workspace.'
 }
@@ -40,63 +45,65 @@ function Get-RunInventory {
     & $verifyInventory -InventoryJson ($listing -join [Environment]::NewLine) -ArchiveBytes ([int64]$meta.ArchiveBytes)
 }
 
-function Assert-SameInventory {
-    param([object[]]$Expected, [object[]]$Current)
-    if ($Expected.Count -ne $Current.Count) { throw 'Remote inventory changed since recovery.' }
-    foreach ($item in $Current) {
-        $match = @($Expected | Where-Object { $_.Path -ceq $item.Path -and $_.ID -ceq $item.ID -and $_.Size -eq $item.Size })
-        if ($match.Count -ne 1) { throw 'Remote inventory changed since recovery.' }
-    }
-}
-
 Write-Host "[+] Inspecting $remoteDir"
 $inventory = @(Get-RunInventory)
 $names = @($inventory | ForEach-Object { $_.Path })
 Write-Host "Remote files: $($names -join ', ')"
 if ($Action -eq 'Inspect') { return }
 
-if (-not $meta.Uploaded -or $names -notcontains 'client-data.zip') {
-    throw 'Recorded upload not complete or archive absent from the remote.'
-}
 $backup = Join-Path (Join-Path (Join-Path $root 'recovery') $RunId) 'client-data.zip'
 $inventoryFile = Join-Path (Split-Path -Parent $backup) 'verified-inventory.json'
 $remoteArchive = "$remoteDir/client-data.zip"
 
 if ($Action -eq 'Download') {
+    # A transfer may finish remotely before the local Uploaded flag is saved.
+    # Hash verification, not that flag alone, establishes a valid recovery.
+    if ($names -notcontains 'client-data.zip') {
+        throw 'Remote archive absent. Inspect the run before attempting download.'
+    }
     New-Item -ItemType Directory -Path (Split-Path -Parent $backup) -Force | Out-Null
     & $rclone --config $config copyto $remoteArchive $backup
     if ($LASTEXITCODE -ne 0) { throw 'Downloading remote archive failed.' }
     if ((Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $meta.ArchiveSha256) {
         throw 'Recovered archive hash does not match the local run record.'
     }
-    $inventory | ConvertTo-Json | Set-Content -LiteralPath $inventoryFile -Encoding UTF8
+    # Explicit -InputObject preserves the JSON array, including one-object inventories.
+    $serialized = ConvertTo-Json -InputObject ([object[]]$inventory) -Depth 5
+    [System.IO.File]::WriteAllText(
+        $inventoryFile, $serialized, [System.Text.UTF8Encoding]::new($false)
+    )
     Write-Host "[OK] Verified recovered archive: $backup"
     Write-Host "[OK] SHA256: $($meta.ArchiveSha256)"
     return
 }
 
-# Deliberate authorization gates for remote changes.
 if ($ConfirmRunId -cne $RunId) { throw 'Deletion requires -ConfirmRunId matching this exact run.' }
-if (-not (Test-Path -LiteralPath $backup) -or
-    (Get-FileHash -LiteralPath $backup -Algorithm SHA256).Hash -ne $meta.ArchiveSha256) {
-    throw 'Download and hash-verify the remote archive with -Action Download before deleting.'
+$targets = @(& $planRecovery -RunMetadata $meta -CurrentInventory $inventory -BackupPath $backup -SavedInventoryFile $inventoryFile)
+if ($targets.Count -eq 0) {
+    Write-Host '[OK] No remote lab objects remain.'
+    return
 }
-if (-not (Test-Path -LiteralPath $inventoryFile)) {
-    throw 'Missing the inventory saved with the verified local recovery.'
-}
-$saved = @(Get-Content -LiteralPath $inventoryFile -Raw | ConvertFrom-Json)
-Assert-SameInventory -Expected $saved -Current $inventory
-if ($names -notcontains 'client-data.zip') { throw 'Remote archive missing.' }
 
-if ($PSCmdlet.ShouldProcess($remoteDir, 'Delete the recorded synthetic archive and probe only')) {
-    # Recheck after the confirmation prompt, immediately before deletion.
+if ($PSCmdlet.ShouldProcess($remoteDir, "Delete recorded synthetic objects: $($targets -join ', ')")) {
+    # The pre-prompt inventory must still match after operator confirmation.
     $current = @(Get-RunInventory)
-    Assert-SameInventory -Expected $saved -Current $current
-    & $rclone --config $config deletefile $remoteArchive
-    if ($LASTEXITCODE -ne 0) { throw 'Remote archive deletion failed.' }
-    if ($names -contains 'probe.txt') {
-        & $rclone --config $config deletefile "$remoteDir/probe.txt"
-        if ($LASTEXITCODE -ne 0) { throw 'Remote probe deletion failed.' }
+    & $assertInventory -Expected $inventory -Current $current
+
+    foreach ($name in $targets) {
+        # Recheck before each path-based delete. MEGA operations are not atomic;
+        # never continue if names, IDs, or sizes diverge mid-cleanup.
+        $fresh = @(Get-RunInventory)
+        & $assertInventory -Expected $current -Current $fresh
+        if (@($current | Where-Object { $_.Path -ceq $name }).Count -ne 1) {
+            throw "Expected remote object is no longer present: $name"
+        }
+        & $rclone --config $config deletefile "$remoteDir/$name"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Remote deletion failed for $name. Inspect before retrying."
+        }
+        $current = @($current | Where-Object { $_.Path -cne $name })
     }
-    Write-Host '[OK] Deleted the two specified lab objects (MEGA may retain them in Trash).'
+    $after = @(Get-RunInventory)
+    & $assertInventory -Expected $current -Current $after
+    Write-Host "[OK] Deleted $($targets.Count) specified lab object(s) (MEGA may retain them in Trash)."
 }
