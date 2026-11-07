@@ -1,7 +1,9 @@
 name: Windows PowerShell tests
 on:
   push:
-    branches: [main, "codex/scenario-hardening-roadmap"]
+    branches:
+      - main
+      - codex/scenario-hardening-roadmap
   pull_request:
   workflow_dispatch:
 
@@ -9,32 +11,47 @@ permissions:
   contents: read
 
 jobs:
-  windows-powershell:
-    name: ${{ matrix.shell }}
+  offline-tests:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
-      - name: Parse all PowerShell scripts
-        shell: ${{ matrix.shell }}
+      - name: Parse PowerShell files (5.1)
+        shell: powershell
         run: |
           $errors = @()
-          Get-ChildItem -Path scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
+          Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
             $tokens = $null
             $fileErrors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
             $errors += @($fileErrors | Where-Object { $null -ne $_ })
           }
-          if ($errors.Count) { $errors | Format-List; throw 'PowerShell parse failed.' }
-      - name: Offline smoke tests
-        shell: ${{ matrix.shell }}
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
+      - name: Smoke tests (5.1)
+        shell: powershell
         run: ./tests/smoke.ps1
-      - name: Hardening regression tests
-        shell: ${{ matrix.shell }}
+      - name: Hardening tests (5.1)
+        shell: powershell
         run: ./tests/hardening.ps1
-      - name: Recovery planning regression tests
-        shell: ${{ matrix.shell }}
+      - name: Recovery planning tests (5.1)
+        shell: powershell
+        run: ./tests/recovery.ps1
+      - name: Parse PowerShell files (7)
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $fileErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
+            $errors += @($fileErrors | Where-Object { $null -ne $_ })
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
+      - name: Smoke tests (7)
+        shell: pwsh
+        run: ./tests/smoke.ps1
+      - name: Hardening tests (7)
+        shell: pwsh
+        run: ./tests/hardening.ps1
+      - name: Recovery planning tests (7)
+        shell: pwsh
         run: ./tests/recovery.ps1
