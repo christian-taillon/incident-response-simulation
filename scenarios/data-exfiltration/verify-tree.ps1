@@ -31,10 +31,11 @@ foreach ($row in $rows) {
         throw "Invalid manifest size or SHA256: $rel"
     }
     $allowedFiles[$rel] = $row
-    $parent = Split-Path -Path $rel -Parent
-    while ($parent) {
-        $allowedDirs[$parent] = $true
-        $parent = Split-Path -Path $parent -Parent
+    # Build directory prefixes from validated relative segments, not from
+    # provider-aware Split-Path behavior (which differs across PowerShell versions).
+    $parts = $rel.Split([char]'\')
+    for ($i = 1; $i -lt $parts.Length; $i++) {
+        $allowedDirs[[string]::Join('\', $parts, 0, $i)] = $true
     }
 }
 
