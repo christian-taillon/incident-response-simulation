@@ -10,13 +10,21 @@ permissions:
   contents: read
 
 jobs:
-  powershell-51:
-    name: Windows PowerShell 5.1
+  windows-tests:
+    name: ${{ matrix.label }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Windows PowerShell 5.1
+            shell: powershell
+          - label: PowerShell 7
+            shell: pwsh
     steps:
       - uses: actions/checkout@v4
       - name: Parse PowerShell files
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: |
           $errors = @()
           Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
@@ -27,36 +35,11 @@ jobs:
           }
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
       - name: Smoke tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: ./tests/smoke.ps1
       - name: Hardening tests
-        shell: powershell
+        shell: ${{ matrix.shell }}
         run: ./tests/hardening.ps1
       - name: Recovery planning tests
-        shell: powershell
-        run: ./tests/recovery.ps1
-  powershell-7:
-    name: PowerShell 7
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Parse PowerShell files
-        shell: pwsh
-        run: |
-          $errors = @()
-          Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
-            $tokens = $null
-            $fileErrors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
-            $errors += @($fileErrors | Where-Object { $null -ne $_ })
-          }
-          if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
-      - name: Smoke tests
-        shell: pwsh
-        run: ./tests/smoke.ps1
-      - name: Hardening tests
-        shell: pwsh
-        run: ./tests/hardening.ps1
-      - name: Recovery planning tests
-        shell: pwsh
+        shell: ${{ matrix.shell }}
         run: ./tests/recovery.ps1

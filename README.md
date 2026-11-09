@@ -23,7 +23,7 @@ The [data exfiltration README](scenarios/data-exfiltration/README.md) contains e
 
 ## Verification
 
-The offline Windows checks are `tests/smoke.ps1` and `tests/hardening.ps1`. They cover encoding, source/staged/archive integrity, junction rejection, forced changes during staging, remote-inventory parsing, and failed-discovery logging. They do not contact MEGA.
+Run `.\tests\smoke.ps1`, `.\tests\hardening.ps1`, and `.\tests\recovery.ps1` on a Windows lab host with Windows PowerShell 5.1 or PowerShell 7. These offline checks cover encoding, source/staged/archive integrity, junction rejection, forced staging changes, remote-inventory validation, recovery planning, and failed-discovery logging. They do not contact MEGA. GitHub Actions runs all three test scripts on pull requests and updates to `main` under both PowerShell versions.
 
 The combined transfer, RTR visibility, and Falcon queries **still require verification on a sensor-equipped Windows VM**. An executable running does not guarantee a Falcon detection.
 
