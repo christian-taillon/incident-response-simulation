@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$InventoryJson,
     [int64]$ArchiveBytes = -1,
-    [switch]$RequireArchive
+    [switch]$RequireArchive,
+    [switch]$SavedInventory
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,13 +18,19 @@ $seenNames = @{}
 $seenIds = @{}
 $validated = @()
 foreach ($item in $items) {
-    if ($null -eq $item -or $item.IsDir -ne $false) {
+    if ($null -eq $item -or
+        ($null -ne $item.IsDir -and $item.IsDir -ne $false) -or
+        (-not $SavedInventory -and $item.IsDir -ne $false)) {
         throw 'Unexpected remote directory or invalid inventory item.'
     }
     $name = [string]$item.Path
     $id = [string]$item.ID
+    # Rclone lsjson includes Name and IsDir; locally saved, already validated
+    # inventories contain only Path, ID, and Size. Reject inconsistent values
+    # if the optional fields are present in either format.
     if ($name -cnotin @('probe.txt', 'client-data.zip') -or
-        $item.Name -cne $name -or [string]::IsNullOrWhiteSpace($id)) {
+        ((-not $SavedInventory -or $null -ne $item.Name) -and $item.Name -cne $name) -or
+        [string]::IsNullOrWhiteSpace($id)) {
         throw "Unexpected or ambiguous remote object: $name"
     }
     if ($seenNames.ContainsKey($name) -or $seenIds.ContainsKey($id)) {
