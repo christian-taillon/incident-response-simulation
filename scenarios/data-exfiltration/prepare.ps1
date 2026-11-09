@@ -83,13 +83,20 @@ if ($ExtraMiB -gt 0) {
     }
 }
 
-# The separate manifest is the complete allowlist for later transfers.
+# Resolve the root before making relative manifest paths. Windows CI uses a
+# shortened %TEMP% path (RUNNER~1), while FileInfo.FullName expands it.
+# Using the caller's string length would create invalid paths such as ts\Aspen\...
+$canonicalDocs = (Get-Item -LiteralPath $docs).FullName.TrimEnd('\')
+$docsPrefix = $canonicalDocs + '\'
 $rows = @(
     Get-ChildItem -LiteralPath $docs -Recurse -File -Force |
         Sort-Object FullName |
         ForEach-Object {
+            if (-not $_.FullName.StartsWith($docsPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Synthetic file escaped the dataset root: $($_.FullName)"
+            }
             [pscustomobject]@{
-                RelativePath = $_.FullName.Substring($docs.Length + 1)
+                RelativePath = $_.FullName.Substring($docsPrefix.Length)
                 SizeBytes = $_.Length
                 SHA256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
             }
