@@ -26,7 +26,7 @@ if ($RunMetadata.Uploaded -or $hasArchive) {
     $savedJson = Get-Content -LiteralPath $SavedInventoryFile -Raw
     # Reuse the validated inventory parser; do not rely on PowerShell 5.1
     # ConvertFrom-Json pipeline array semantics.
-    $saved = @(& $verifyInventory -InventoryJson $savedJson -ArchiveBytes ([int64]$RunMetadata.ArchiveBytes) -RequireArchive)
+    $saved = @(& $verifyInventory -InventoryJson $savedJson -ArchiveBytes ([int64]$RunMetadata.ArchiveBytes) -RequireArchive -SavedInventory)
     & $assertInventory -Expected $saved -Current $CurrentInventory -AllowMissing
 }
 # Otherwise this was a failed, probe-only upload. An explicit matching RunId
