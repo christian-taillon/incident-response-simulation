@@ -8,6 +8,9 @@ $env:LOCALAPPDATA = $temporaryRoot
 try {
     $data = Join-Path $repo 'scenarios\data-exfiltration'
     & (Join-Path $data 'prepare.ps1') -ExtraMiB 1
+    $inputRoot = Join-Path (Join-Path $env:LOCALAPPDATA 'CSWorkshop') 'ClientDocuments'
+    $firstRow = Import-Csv -LiteralPath (Join-Path $env:LOCALAPPDATA 'CSWorkshop\dataset-manifest.csv') | Select-Object -First 1
+    Write-Host "[DEBUG-ROOT-PATH] input=$inputRoot resolved=$((Get-Item -LiteralPath $inputRoot).FullName) firstManifestPath=$($firstRow.RelativePath)"
     & (Join-Path $data 'execute.ps1') -ValidateOnly
 
     $docs = Join-Path $temporaryRoot 'CSWorkshop\ClientDocuments'
