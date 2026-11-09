@@ -64,6 +64,25 @@ try {
     $docs = Join-Path $root 'ClientDocuments'
     $manifest = Join-Path $root 'dataset-manifest.csv'
 
+    # Nested allowed directories must validate in both PowerShell 5.1 and 7.
+    # An unrelated empty directory must still be rejected.
+    $fixture = Join-Path $root 'NestedFixture'
+    $nestedDir = Join-Path $fixture 'Aspen\Nested'
+    New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
+    $nestedFile = Join-Path $nestedDir 'example.txt'
+    Set-Content -LiteralPath $nestedFile -Value 'fictional' -Encoding ASCII
+    $nestedManifest = Join-Path $root 'nested-manifest.csv'
+    [pscustomobject]@{
+        RelativePath = 'Aspen\Nested\example.txt'
+        SizeBytes = (Get-Item -LiteralPath $nestedFile).Length
+        SHA256 = (Get-FileHash -LiteralPath $nestedFile -Algorithm SHA256).Hash
+    } | Export-Csv -LiteralPath $nestedManifest -NoTypeInformation -Encoding UTF8
+    if ((& $verifyTree -Tree $fixture -Manifest $nestedManifest) -ne 1) {
+        throw 'Nested manifest directory failed validation.'
+    }
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'Unexpected') | Out-Null
+    Assert-Rejected { & $verifyTree -Tree $fixture -Manifest $nestedManifest } 'Unexpected directory'
+
     $backed = Join-Path $root 'BackedDocs'
     Move-Item -LiteralPath $docs -Destination $backed
     New-Item -ItemType Junction -Path $docs -Target $backed | Out-Null
