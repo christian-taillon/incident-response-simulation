@@ -18,14 +18,16 @@ jobs:
       matrix:
         include:
           - label: Windows PowerShell 5.1
-            shell: powershell
+            executable: powershell
           - label: PowerShell 7
-            shell: pwsh
+            executable: pwsh
     steps:
       - uses: actions/checkout@v4
-      - name: Parse PowerShell files
-        shell: ${{ matrix.shell }}
+      - name: Offline checks
+        shell: pwsh
         run: |
+          $check = @'
+          $ErrorActionPreference = 'Stop'
           $errors = @()
           Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
             $tokens = $null
@@ -34,12 +36,9 @@ jobs:
             $errors += @($fileErrors | Where-Object { $null -ne $_ })
           }
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
-      - name: Smoke tests
-        shell: ${{ matrix.shell }}
-        run: ./tests/smoke.ps1
-      - name: Hardening tests
-        shell: ${{ matrix.shell }}
-        run: ./tests/hardening.ps1
-      - name: Recovery planning tests
-        shell: ${{ matrix.shell }}
-        run: ./tests/recovery.ps1
+          & ./tests/smoke.ps1
+          & ./tests/hardening.ps1
+          & ./tests/recovery.ps1
+          '@
+          & '${{ matrix.executable }}' -NoProfile -NonInteractive -Command $check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
