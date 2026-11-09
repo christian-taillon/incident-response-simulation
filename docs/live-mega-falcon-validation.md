@@ -56,7 +56,8 @@ $record | Select-Object RunId, Host, RemoteDir, ArchiveSha256, ArchiveBytes, Pro
 $rclone = Join-Path $lab 'bin\rclone.exe'
 $listing = (& $rclone --config (Join-Path $lab 'rclone.conf') lsjson $record.RemoteDir --recursive --no-mimetype --no-modtime) -join [Environment]::NewLine
 if ($LASTEXITCODE -ne 0) { throw 'Remote inventory failed.' }
-ConvertFrom-Json -InputObject $listing | Select-Object Path, ID, Size
+$remoteItems = ConvertFrom-Json -InputObject $listing
+foreach ($item in $remoteItems) { $item | Select-Object Path, ID, Size }
 ~~~
 
 Expected: exactly probe.txt and client-data.zip with unique remote IDs, and archive size matching the run record. Transfer exit status alone is not remote-content proof.
@@ -82,7 +83,7 @@ After explicit facilitator approval, execute the deletion and its confirmation p
 .\recover.ps1 -RunId $run -Action Inspect
 ~~~
 
-An empty run prefix does not prove permanent erasure from the MEGA account.
+If the backend removes an empty run directory and the final Inspect command cannot list it, verify the recorded prefix from the dedicated MEGA account before marking the outcome. An empty prefix does not prove permanent erasure from the account.
 
 ## 4. Negative cases, each on a separate disposable run
 
