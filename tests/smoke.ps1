@@ -8,6 +8,11 @@ $env:LOCALAPPDATA = $temporaryRoot
 try {
     $data = Join-Path $repo 'scenarios\data-exfiltration'
     & (Join-Path $data 'prepare.ps1') -ExtraMiB 1
+    $manifest = Join-Path $env:LOCALAPPDATA 'CSWorkshop\dataset-manifest.csv'
+    $expectedPath = @(Import-Csv -LiteralPath $manifest | Where-Object {
+        $_.RelativePath -ceq 'Aspen\Billing.csv'
+    })
+    if ($expectedPath.Count -ne 1) { throw 'Manifest paths did not use the canonical dataset root.' }
     & (Join-Path $data 'execute.ps1') -ValidateOnly
 
     $docs = Join-Path $temporaryRoot 'CSWorkshop\ClientDocuments'

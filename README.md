@@ -23,13 +23,15 @@ The [data exfiltration README](scenarios/data-exfiltration/README.md) contains e
 
 ## Verification
 
-The offline Windows smoke test is `tests/smoke.ps1`; it creates a small synthetic dataset, verifies its manifest, detects deliberate tampering, and checks encoding round-trip. It does not contact MEGA.
+The offline Windows checks are `tests/smoke.ps1` and `tests/hardening.ps1`. They cover encoding, source/staged/archive integrity, junction rejection, forced changes during staging, remote-inventory parsing, and failed-discovery logging. They do not contact MEGA.
 
 The combined transfer, RTR visibility, and Falcon queries **still require verification on a sensor-equipped Windows VM**. An executable running does not guarantee a Falcon detection.
 
 ## Future playbooks
 
 A future `playbooks/` directory can describe how to combine these independent components with ClickFix, remote access, persistence, or extortion injects. It does not need an orchestration framework. ClickFix and Beaconator are **not** included in this repository.
+
+The [scenario roadmap](ROADMAP.md) prioritizes proposed components and playbooks. Those activities are designs, not implemented or lab-validated scenarios.
 
 ## Guardrails
 

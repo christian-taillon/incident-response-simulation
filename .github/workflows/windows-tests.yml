@@ -1,0 +1,62 @@
+name: Windows PowerShell tests
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell-51:
+    name: Windows PowerShell 5.1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell files
+        shell: powershell
+        run: |
+          $errors = @()
+          Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $fileErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
+            $errors += @($fileErrors | Where-Object { $null -ne $_ })
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
+      - name: Smoke tests
+        shell: powershell
+        run: ./tests/smoke.ps1
+      - name: Hardening tests
+        shell: powershell
+        run: ./tests/hardening.ps1
+      - name: Recovery planning tests
+        shell: powershell
+        run: ./tests/recovery.ps1
+  powershell-7:
+    name: PowerShell 7
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell files
+        shell: pwsh
+        run: |
+          $errors = @()
+          Get-ChildItem scenarios, tests -Recurse -Filter *.ps1 | ForEach-Object {
+            $tokens = $null
+            $fileErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$fileErrors)
+            $errors += @($fileErrors | Where-Object { $null -ne $_ })
+          }
+          if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
+      - name: Smoke tests
+        shell: pwsh
+        run: ./tests/smoke.ps1
+      - name: Hardening tests
+        shell: pwsh
+        run: ./tests/hardening.ps1
+      - name: Recovery planning tests
+        shell: pwsh
+        run: ./tests/recovery.ps1

@@ -14,9 +14,11 @@ Standalone Windows activity for a CrowdStrike investigation workshop. `prepare.p
 ~~~powershell
 .\prepare.ps1 -ExtraMiB 32
 .\execute.ps1 -ValidateOnly
+# Optional offline rehearsal: verifies the source, staged copy, and ZIP contents.
+.\execute.ps1 -StageOnly
 ~~~
 
-Preparation is intentionally non-destructive: an existing dataset is never overwritten. All synthetic files are enumerated with sizes and SHA256 values in `%LOCALAPPDATA%\CSWorkshop\dataset-manifest.csv`. `execute.ps1` refuses unexpected, modified, or linked files.
+Preparation is intentionally non-destructive: an existing dataset is never overwritten. All synthetic files are enumerated with sizes and SHA256 values in `%LOCALAPPDATA%\CSWorkshop\dataset-manifest.csv`. `execute.ps1` refuses unexpected, modified, or linked files at the dataset root and below it. It checks the source, staged copy, and extracted ZIP before any transfer. `-StageOnly` creates local staging and ZIP artifacts but never contacts MEGA or writes a run record.
 
 ## Run at the selected incident time
 
@@ -55,7 +57,7 @@ All files stay beneath the executing user's `%LOCALAPPDATA%\CSWorkshop` director
 | `abandoned-<run>\`, optional | Failed staging attempt |
 | `staging-<run>\` and `client-data-<run>.zip` | Collected documents and ZIP |
 | `probe-<run>.txt` | Small test upload |
-| `bin\rclone.exe` and `rclone.conf` | Transfer tool and cloud destination |
+| `rclone-v1.75.2-windows-amd64.zip`, `bin\rclone.exe`, and `rclone.conf` | Pinned transfer tool archive, checked executable, and cloud destination |
 | `transfer-<run>.log` | Transfer events |
 | `runs\<run>.json`, `last-run.txt` | Exact remote directory and archive SHA256 |
 | `mega-credentials.env`, optional | Recoverable lab credentials, plaintext |
@@ -84,14 +86,35 @@ $run = (Get-Content "$env:LOCALAPPDATA\CSWorkshop\last-run.txt" -Raw).Trim()
 .\recover.ps1 -Action Delete -ConfirmRunId $run
 ~~~
 
-The deletion path cannot accept an arbitrary remote URL, checks the recorded run ID and allowed filenames, requires a verified recovered archive, and calls Rclone's single-object `deletefile` only. By default the MEGA backend moves deleted files to Trash, not permanent destruction. Nothing is purged recursively. If you need to use the recovery utility from a separate analyst workstation, securely copy that run's metadata and lab-only Rclone configuration into the equivalent CSWorkshop location first.
+The deletion path cannot accept an arbitrary remote URL, checks the recorded run ID, and calls Rclone's single-object `deletefile` only. Any run with an uploaded or remotely visible archive requires a verified recovered archive and saved inventory before cleanup. If the archive has already been deleted, a retry may remove the remaining probe only when its ID and size match the saved inventory. A failed, probe-only run can be cleaned up without fabricating an archive recovery, using the same explicit run confirmation. A recursive JSON inventory must contain only the two allowed files, with unique names and object IDs; their IDs and sizes must still match the inventory saved at download. The verified local ZIP and `verified-inventory.json` remain in `recovery\<run>\`. By default the MEGA backend moves deleted files to Trash, not permanent destruction. Nothing is purged recursively. If you need to use the recovery utility from a separate analyst workstation, securely copy that run's metadata and lab-only Rclone configuration into the equivalent CSWorkshop location first.
 
-## CrowdStrike investigation checkpoints
+## Threat behavior and investigation
 
-1. Identify `cmd.exe`, `robocopy.exe` (including the failed attempt), `tar.exe`, and `rclone.exe` process trees and command lines in Falcon Advanced Event Search (`ProcessRollup2`).
-2. Locate the source, staging destination, archive, and transfer configuration through RTR. Keep recovered credentials out of shared logs and screenshots.
-3. Correlate small and large uploads and any Falcon network telemetry. Network activity alone does not prove successful transfer.
-4. Validate the remote listing, recover the ZIP, and compare the recorded SHA256.
-5. Discuss containment, authorization to use recovered account access, preservation, disclosure, and when a deletion attempt is appropriate.
+This component models local file discovery, collection, archiving, and cloud exfiltration: [ATT&CK T1083](https://attack.mitre.org/techniques/T1083/), [T1005](https://attack.mitre.org/techniques/T1005/), [T1074.001](https://attack.mitre.org/techniques/T1074/001/), [T1560.001](https://attack.mitre.org/techniques/T1560/001/), and [T1567.002](https://attack.mitre.org/techniques/T1567/002/). Google Threat Intelligence reports real intrusions using Rclone, MEGA, local archives, and targeting legal/accounting records in its [ransomware activity analysis](https://cloud.google.com/blog/topics/threat-intelligence/ransomware-ttps-shifting-threat-landscape). The fictional clients, failed local copy, probe, and exact MEGA path are **simulation choices**, not claims about one campaign.
 
-The queries and the full Windows/Falcon execution path still need hands-on validation. Earlier testing separately established that Rclone could execute after a lab-scoped Application Abuse exception and that MEGA authentication succeeded.
+Facilitators should keep the run ID, account, and manifest out of analyst-facing clues until investigators find supporting artifacts. Useful questions are:
+
+1. Which files were discovered, staged, and archived, and were any real files involved?
+2. Did the failed Robocopy command precede a successful collection? What does its exit status prove?
+3. Does endpoint telemetry establish an attempted transfer, a reported successful upload, or verified remote content?
+4. Which local evidence and remote account records should be preserved before containment or deletion?
+
+Falcon Advanced Event Search uses CrowdStrike Query Language, **not** the FQL API filter syntax. A starting query, to scope by host and time in the UI, is:
+
+~~~text
+#event_simpleName=ProcessRollup2 event_platform=Win
+| CommandLine=/CSWorkshop|rclone|robocopy|tar\.exe/i
+| table([@timestamp, aid, ComputerName, ParentBaseFileName, FileName, CommandLine], limit=200)
+~~~
+
+Adapt field names and event availability to the tenant. [CrowdStrike's LogScale tutorial](https://library.humio.com/integrations/integrations-crowdstrike-fltr-tutorial-crowdstrike-fltr-tutorial.html) documents this query style. RTR can corroborate the manifest, ZIP, transfer log, and run metadata; process or network events alone cannot prove the bytes stored by MEGA. Rclone's [MEGA backend](https://rclone.org/mega/) does not expose remote hashes and permits duplicate names, so recovery and local SHA256 comparison are needed for content proof.
+
+## Control-validation checkpoints
+
+1. **Executed:** Local run metadata and exit codes show which script phases completed.
+2. **Recorded:** Search process ancestry, command lines, file artifacts, and available network events. Missing events are a visibility result.
+3. **Detected or prevented:** Record the exact prevention or analytic, if any, separately from execution and telemetry.
+4. **Reconstructed:** Compare source, staging, ZIP, transfer log, remote inventory, and recovered SHA256; identify what remains uncertain.
+5. **Responded:** Preserve evidence, scope the dedicated account, make an authorized containment choice, and verify its effect.
+
+Reset with a disposable VM snapshot. Remove only the recorded local run's paths when manual cleanup is required; use `recover.ps1` for remote objects. Offline PowerShell 5.1 and 7 regression tests cover the manifest and inventory validators. `tests/recovery.ps1` additionally checks full, partial, probe-only, and altered-inventory cleanup planning. Windows CI runs these offline checks, but the full Windows/Falcon execution path and live MEGA behavior still need hands-on validation. Earlier testing separately established that Rclone could execute after a lab-scoped Application Abuse exception and that MEGA authentication succeeded; those observations do not validate this revised path. The v1.75.2 archive digest is published in the [official GitHub release asset metadata](https://api.github.com/repos/rclone/rclone/releases/tags/v1.75.2), and the verified ZIP is retained and checked before each use.

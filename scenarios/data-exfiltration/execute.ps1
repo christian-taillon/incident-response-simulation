@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [switch]$ValidateOnly,
+    [switch]$StageOnly,
     [switch]$AddNoise
 )
 
@@ -11,9 +12,10 @@ $docs = Join-Path $root 'ClientDocuments'
 $marker = Join-Path $root '.synthetic-only'
 $manifest = Join-Path $root 'dataset-manifest.csv'
 $signature = 'CSWORKSHOP-SYNTHETIC-ONLY'
-$bin = Join-Path $root 'bin'
-$rclone = Join-Path $bin 'rclone.exe'
 $config = Join-Path $root 'rclone.conf'
+$verify = Join-Path $PSScriptRoot 'verify-tree.ps1'
+$verifyInventory = Join-Path $PSScriptRoot 'verify-remote-inventory.ps1'
+$ensureRclone = Join-Path $PSScriptRoot 'ensure-rclone.ps1'
 
 if (-not (Test-Path -LiteralPath $marker) -or
     (Get-Content -LiteralPath $marker -Raw).Trim() -ne $signature) {
@@ -22,84 +24,18 @@ if (-not (Test-Path -LiteralPath $marker) -or
 if (-not (Test-Path -LiteralPath $docs) -or -not (Test-Path -LiteralPath $manifest)) {
     throw 'Missing synthetic documents or dataset manifest.'
 }
-$entries = @(Get-ChildItem -LiteralPath $docs -Recurse -Force)
-if (@($entries | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count -gt 0) {
-    throw 'Links and junctions are prohibited in the workshop dataset.'
-}
-$files = @($entries | Where-Object { -not $_.PSIsContainer })
-$rows = @(Import-Csv -LiteralPath $manifest)
-if ($rows.Count -eq 0 -or $rows.Count -ne $files.Count) {
-    throw 'Dataset differs from the manifest (file count mismatch).'
-}
-
-$allowed = @{}
-foreach ($row in $rows) {
-    $rel = [string]$row.RelativePath
-    if ([string]::IsNullOrWhiteSpace($rel) -or
-        [IO.Path]::IsPathRooted($rel) -or
-        $rel -match '(^|[\\/])\.\.([\\/]|$)') {
-        throw "Invalid relative path in manifest: $rel"
-    }
-    if ($allowed.ContainsKey($rel)) { throw "Duplicate manifest path: $rel" }
-    $path = Join-Path $docs $rel
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-        throw "Missing synthetic file: $rel"
-    }
-    $file = Get-Item -LiteralPath $path
-    if ($file.Length -ne [int64]$row.SizeBytes -or
-        (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne $row.SHA256) {
-        throw "Dataset integrity failure: $rel"
-    }
-    $allowed[$rel] = $true
-}
-foreach ($file in $files) {
-    $rel = $file.FullName.Substring($docs.Length + 1)
-    if (-not $allowed.ContainsKey($rel)) { throw "Unexpected file: $rel" }
-}
-
-Write-Host "[OK] Dataset validated: $($files.Count) synthetic files"
+$count = & $verify -Tree $docs -Manifest $manifest
+Write-Host "[OK] Dataset validated: $count synthetic files"
 if ($ValidateOnly) { return }
-if (-not $env:MEGA_EMAIL -or -not $env:MEGA_PASSWORD) {
+if (-not $StageOnly -and (-not $env:MEGA_EMAIL -or -not $env:MEGA_PASSWORD)) {
     throw 'MEGA_EMAIL and MEGA_PASSWORD must be set in this PowerShell session.'
 }
-
-# Pinned to the Rclone version tested previously in the workshop.
-$version = 'v1.75.2'
-$zipName = "rclone-$version-windows-amd64.zip"
-$zipSHA256 = '8A9DB2BAD1DC79A65B3348FD857069598E2AAB7CF4D118B77B1DF23055AFF818'
-if (-not (Test-Path -LiteralPath $rclone)) {
-    $zip = Join-Path $root $zipName
-    $unpack = Join-Path $root '_rclone-download'
-    New-Item -ItemType Directory -Path $bin, $unpack -Force | Out-Null
-    Write-Host '[+] Downloading Rclone archive'
-    Invoke-WebRequest -UseBasicParsing -Uri "https://downloads.rclone.org/$version/$zipName" -OutFile $zip
-    if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ne $zipSHA256) {
-        throw 'Downloaded Rclone ZIP does not match the pinned SHA256.'
-    }
-    Expand-Archive -LiteralPath $zip -DestinationPath $unpack -Force
-    $source = Get-ChildItem -LiteralPath $unpack -Filter rclone.exe -Recurse -File |
-        Select-Object -First 1
-    if (-not $source) { throw 'Rclone executable missing from ZIP.' }
-    Copy-Item -LiteralPath $source.FullName -Destination $rclone -Force
-    Remove-Item -LiteralPath $zip -Force
-    Remove-Item -LiteralPath $unpack -Recurse -Force
+if (-not $StageOnly -and ($env:MEGA_EMAIL -match '[\r\n]' -or $env:MEGA_PASSWORD -match '[\r\n]')) {
+    throw 'Newline characters are not allowed in lab account values.'
 }
-& $rclone version | Out-Host
-if ($LASTEXITCODE -ne 0) { throw 'Rclone execution failed. Review EDR prevention.' }
-
-# Obfuscation prevents casual display, but it is not credential encryption.
-$obscured = ($env:MEGA_PASSWORD | & $rclone obscure -)
-if ($LASTEXITCODE -ne 0 -or -not $obscured) { throw 'Rclone password setup failed.' }
-$content = @"
-[workshopmega]
-type = mega
-user = $env:MEGA_EMAIL
-pass = $obscured
-use_https = true
-"@
-[System.IO.File]::WriteAllText(
-    $config, $content, [System.Text.UTF8Encoding]::new($false)
-)
+if (-not $StageOnly -and $env:COMPUTERNAME -notmatch '^[A-Za-z0-9_-]{1,63}$') {
+    throw 'Computer name is not safe for the recorded remote path.'
+}
 
 $run = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
 $staging = Join-Path $root "staging-$run"
@@ -127,10 +63,49 @@ $cmdLine = 'dir /s /b "' + $docs + '"'
 Write-Host '[+] Collecting files with Robocopy'
 & robocopy.exe $docs $staging /E /XJ /R:0 /W:0 | Out-Host
 if ($LASTEXITCODE -ge 8) { throw 'Document staging failed.' }
+& $verify -Tree $staging -Manifest $manifest | Out-Null
+Write-Host '[OK] Staged files match the synthetic manifest'
 
 Write-Host '[+] Creating ZIP archive with Tar'
 & tar.exe -a -cf $archive -C $staging .
 if ($LASTEXITCODE -ne 0) { throw 'Archive creation failed.' }
+$archiveCheck = Join-Path $root "archive-check-$run"
+try {
+    Expand-Archive -LiteralPath $archive -DestinationPath $archiveCheck
+    & $verify -Tree $archiveCheck -Manifest $manifest | Out-Null
+}
+catch {
+    if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $archiveCheck) {
+        Remove-Item -LiteralPath $archiveCheck -Recurse -Force
+    }
+}
+Write-Host '[OK] Archive contents match the synthetic manifest'
+if ($StageOnly) {
+    Write-Host "[OK] Offline staging complete: $archive"
+    return
+}
+
+$rclone = & $ensureRclone -Root $root
+& $rclone version | Out-Host
+if ($LASTEXITCODE -ne 0) { throw 'Rclone execution failed. Review EDR prevention.' }
+
+# Obfuscation prevents casual display, but it is not credential encryption.
+$obscured = ($env:MEGA_PASSWORD | & $rclone obscure -)
+if ($LASTEXITCODE -ne 0 -or -not $obscured) { throw 'Rclone password setup failed.' }
+$content = @"
+[workshopmega]
+type = mega
+user = $env:MEGA_EMAIL
+pass = $obscured
+use_https = true
+"@
+[System.IO.File]::WriteAllText(
+    $config, $content, [System.Text.UTF8Encoding]::new($false)
+)
 
 $hash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
 $meta = [pscustomobject]@{
@@ -154,11 +129,15 @@ $meta.ProbeUploaded = $true
 $meta | ConvertTo-Json | Set-Content -LiteralPath $runFile -Encoding UTF8
 
 Write-Host '[+] Uploading synthetic archive to MEGA'
+if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $hash) {
+    throw 'Archive changed after content verification; refusing transfer.'
+}
 & $rclone --config $config copyto $archive "$remoteDir/client-data.zip" --log-level INFO --log-file $log
 if ($LASTEXITCODE -ne 0) { throw "Archive upload failed; check $log" }
 
-& $rclone --config $config ls $remoteDir
+$listing = @(& $rclone --config $config lsjson $remoteDir --recursive --no-mimetype --no-modtime)
 if ($LASTEXITCODE -ne 0) { throw 'Remote listing failed.' }
+& $verifyInventory -InventoryJson ($listing -join [Environment]::NewLine) -ArchiveBytes $meta.ArchiveBytes -RequireArchive | Out-Null
 $meta.Uploaded = $true
 $meta | ConvertTo-Json | Set-Content -LiteralPath $runFile -Encoding UTF8
 
