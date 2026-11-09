@@ -26,7 +26,12 @@ try {
     $probe = @(& $verify -InventoryJson $probeJson -ArchiveBytes 17)
     $changed = @(& $verify -InventoryJson $changedJson -ArchiveBytes 17)
 
-    [IO.File]::WriteAllText($saved, (ConvertTo-Json -InputObject ([object[]]$full) -Depth 5))
+    $savedJson = ConvertTo-Json -InputObject ([object[]]$full) -Depth 5
+    [IO.File]::WriteAllText($saved, $savedJson)
+    if (@(& $verify -InventoryJson $savedJson -ArchiveBytes 17 -RequireArchive -SavedInventory).Count -ne 2) {
+        throw 'Saved compact inventory did not validate.'
+    }
+    Assert-Rejected { & $verify -InventoryJson $savedJson -ArchiveBytes 17 } 'Unexpected remote directory'
     $targets = @(& $plan -RunMetadata $record -CurrentInventory $full -BackupPath $backup -SavedInventoryFile $saved)
     if ($targets.Count -ne 2 -or $targets[0] -cne 'client-data.zip' -or $targets[1] -cne 'probe.txt') {
         throw 'Complete recovery was not planned correctly.'
