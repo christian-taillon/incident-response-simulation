@@ -3,7 +3,6 @@ on:
   push:
     branches:
       - main
-      - codex/scenario-hardening-roadmap
   pull_request:
   workflow_dispatch:
 
@@ -11,11 +10,12 @@ permissions:
   contents: read
 
 jobs:
-  offline-tests:
+  powershell-51:
+    name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Parse PowerShell files (5.1)
+      - name: Parse PowerShell files
         shell: powershell
         run: |
           $errors = @()
@@ -26,16 +26,21 @@ jobs:
             $errors += @($fileErrors | Where-Object { $null -ne $_ })
           }
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
-      - name: Smoke tests (5.1)
+      - name: Smoke tests
         shell: powershell
         run: ./tests/smoke.ps1
-      - name: Hardening tests (5.1)
+      - name: Hardening tests
         shell: powershell
         run: ./tests/hardening.ps1
-      - name: Recovery planning tests (5.1)
+      - name: Recovery planning tests
         shell: powershell
         run: ./tests/recovery.ps1
-      - name: Parse PowerShell files (7)
+  powershell-7:
+    name: PowerShell 7
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse PowerShell files
         shell: pwsh
         run: |
           $errors = @()
@@ -46,12 +51,12 @@ jobs:
             $errors += @($fileErrors | Where-Object { $null -ne $_ })
           }
           if ($errors.Count -gt 0) { $errors | Format-List; throw 'PowerShell parse failed.' }
-      - name: Smoke tests (7)
+      - name: Smoke tests
         shell: pwsh
         run: ./tests/smoke.ps1
-      - name: Hardening tests (7)
+      - name: Hardening tests
         shell: pwsh
         run: ./tests/hardening.ps1
-      - name: Recovery planning tests (7)
+      - name: Recovery planning tests
         shell: pwsh
         run: ./tests/recovery.ps1
