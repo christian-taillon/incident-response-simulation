@@ -89,7 +89,7 @@ If the backend removes an empty run directory and the final Inspect command cann
 
 | Case | Required observation |
 | --- | --- |
-| Archive upload interrupted after probe is present | Inspect and confirmed cleanup handle the probe-only state |
+| Archive upload interrupted after probe is present | If inventory contains only probe.txt, confirmed cleanup handles that probe-only state; if a partial archive exists, record the inventory rejection rather than bypassing it |
 | Cleanup interrupted after archive deletion | Retry removes only the remaining probe whose saved ID and size match |
 | Unexpected nested object or duplicate remote name | Inventory verification rejects ambiguous contents |
 | Remote object replaced after download | Delete refuses changed ID or size |
