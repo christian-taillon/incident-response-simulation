@@ -21,6 +21,8 @@ Each component is self-contained and manually executed. There is no shared runne
 
 The [data exfiltration README](scenarios/data-exfiltration/README.md) contains exact commands and facilitator checkpoints.
 
+For live acceptance, follow the [MEGA/Falcon facilitator rehearsal](docs/live-mega-falcon-validation.md) and record redacted outcomes in [issue #2](https://github.com/christian-taillon/incident-response-simulation/issues/2). Offline checks cannot validate MEGA behavior or Falcon detections.
+
 ## Verification
 
 Run `.\tests\smoke.ps1`, `.\tests\hardening.ps1`, and `.\tests\recovery.ps1` on a Windows lab host with Windows PowerShell 5.1 or PowerShell 7. These offline checks cover encoding, source/staged/archive integrity, junction rejection, forced staging changes, remote-inventory validation, recovery planning, and failed-discovery logging. They do not contact MEGA. GitHub Actions runs all three test scripts on pull requests and updates to `main` under both PowerShell versions.
